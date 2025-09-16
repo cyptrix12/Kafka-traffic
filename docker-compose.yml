@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  kafka:
+    image: redpandadata/redpanda:v24.1.10
+    command:
+      - redpanda
+      - start
+      - --overprovisioned
+      - --smp=1
+      - --memory=512M
+      - --reserve-memory=0M
+      - --node-id=0
+      - --check=false
+      - --set redpanda.enable_idempotence=true
+      - --kafka-addr=PLAINTEXT://0.0.0.0:9092,OUTSIDE://0.0.0.0:19092
+      - --advertise-kafka-addr=PLAINTEXT://kafka:9092,OUTSIDE://localhost:19092
+    ports:
+      - "19092:19092"   # Kafka (dla ewentualnych narzędzi lokalnych)
+    healthcheck:
+      test: ["CMD", "bash", "-lc", "rpk cluster info -X brokers=kafka:9092 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  producer:
+    build: ./producer
+    depends_on:
+      kafka:
+        condition: service_healthy
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - TOPIC=traffic_events
+      - CSV_PATH=/data/traffic_sample.csv
+      - SPEED_FACTOR=60        # 60x szybciej niż real-time (1 min = 1 s)
+    volumes:
+      - ./data:/data
+
+  spark:
+    image: bitnami/spark:3.5
+    depends_on:
+      kafka:
+        condition: service_healthy
+    working_dir: /opt/app
+    volumes:
+      - ./spark/app:/opt/app
+      - spark-checkpoints:/opt/checkpoints
+    environment:
+      - SPARK_MODE=client
+      - PYSPARK_PYTHON=python
+      - KAFKA_BROKERS=kafka:9092
+      - SOURCE_TOPIC=traffic_events
+      - AGG_TOPIC=traffic_agg
+      - ALERT_TOPIC=congestion_alerts
+      - CONGESTION_THRESHOLD=25
+    command: spark-submit --master local[*] --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0 traffic_stream.py
+
+
+  dashboard:
+    build: ./dashboard
+    depends_on:
+      - spark
+    environment:
+      - KAFKA_BROKERS=kafka:9092
+      - AGG_TOPIC=traffic_agg
+      - ALERT_TOPIC=congestion_alerts
+    ports:
+      - "8501:8501"
+
+volumes:
+  spark-checkpoints:
