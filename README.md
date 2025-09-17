@@ -70,4 +70,41 @@ This will start:
 3. Open the dashboard:
    👉 [http://localhost:8501](http://localhost:8501)
 
----
+## Results and discussion
+<img width="1863" height="1038" alt="obraz" src="https://github.com/user-attachments/assets/5547c42f-c895-4306-a189-b022ece67f51" />
+
+1. Partitions
+   ``` python
+   .config("spark.sql.shuffle.partitions", "1")
+   ```
+   Setting the number of partitions to one is not a typical solution and will only work for a small volume of data. All computations are executed by a single machine (or in our case by a single thread), since parallelism is not being used here. This limits unused but reserved computational power. With increasing amounts of data such a setup will become a bottleneck, so it is important to remember to switch back to the default 200 or even more partitions.
+2. Raw
+   ``` python
+   raw = (
+    spark.readStream
+    .format("kafka")
+    .option("kafka.bootstrap.servers", KAFKA)
+    .option("subscribe", SRC_TOPIC)
+    .option("startingOffsets", "earliest")
+    .load()
+   )
+   events = (
+       raw.selectExpr("CAST(value AS STRING) AS json")
+          .select(from_json(col("json"), schema).alias("d"))
+          .select(
+              to_timestamp(col("d.timestamp")).alias("timestamp"),
+              col("d.road_id").alias("road_id"),
+              col("d.vehicle_count").cast("int").alias("vehicle_count")
+          )
+   )
+   ```
+   raw is a streaming DataFrame in Spark, not a database. It’s an in-memory representation of the Kafka stream, which is later transformed into a structured DataFrame with the fields that are actually need (timestamp, road_id, vehicle_count).
+
+3. Watermark
+   ``` python
+   events.withWatermark("timestamp", "2 minutes")
+   ```
+   A watermark is used when creating a time window for incoming data. Since events with the same timestamp may not arrive at exactly the same time, Spark allows us to set a time buffer (2 minutes) during which computations remain open. The watermark directly marks data that has already been processed, so Spark does not keep recalculating the same results over and over, but instead incrementally updates the existing aggregates.
+
+
+
