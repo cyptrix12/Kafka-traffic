@@ -78,7 +78,9 @@ This will start:
    .config("spark.sql.shuffle.partitions", "1")
    ```
    Setting the number of partitions to one is not a typical solution and will only work for a small volume of data. All computations are executed by a single machine (or in our case by a single thread), since parallelism is not being used here. This limits unused but reserved computational power. With increasing amounts of data such a setup will become a bottleneck, so it is important to remember to switch back to the default 200 or even more partitions.
-2. Raw
+   We tested removing the line that sets spark.sql.shuffle.partitions = 1, leaving the shuffle configuration at its default value. The application still works correctly, as expected.
+   
+3. Raw
    ``` python
    raw = (
     spark.readStream
@@ -100,7 +102,7 @@ This will start:
    ```
    raw is a streaming DataFrame in Spark, not a database. It’s an in-memory representation of the Kafka stream, which is later transformed into a structured DataFrame with the fields that are actually need (timestamp, road_id, vehicle_count).
 
-3. Watermark
+4. Watermark
    ``` python
    events.withWatermark("timestamp", "2 minutes")
    ```
